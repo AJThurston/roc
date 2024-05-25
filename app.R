@@ -1,4 +1,5 @@
 library(extrafont)
+library(tidyverse)
 library(shiny)
 library(ggplot2)
 library(caret)
@@ -9,16 +10,19 @@ ui <- shinyUI(navbarPage("Classification Accuracy",
 #####################
 #Classification Accuracy UI Panel#
 #####################
-  tabPanel("App",
+  tabPanel("Scatterplot",
     fluidPage(
       fluidRow(
       column(width=2,
         helpText(h5(strong("Classification Properties: "))),            
         sliderInput("r",     label = h5("Correlation"), min = -1, max = 1, value = .50, step = .01),
-        numericInput("pcut", label = h5("Predicted Cut Score"), value = 0, step = .05),
+        sliderInput("thresh", label = h5("Threshold"), min = -3, max = 3, value = 0, step = .01),
         numericInput("acut", label = h5("Actual Cut Score"), value = 0, step = .05),
         hr(),
         sliderInput("trans",     label = h5("Transparency"), min = 0, max = 100, value = 25, step = 5, post = "%"),
+        hr(),
+        checkboxInput('setseed','Set seed', value = TRUE),
+        numericInput("seed", label = h5("Seed value"), value = 12345),
         hr(),
         br(),
         h2(a("@AJThurston", href="https://twitter.com/AJThurston", target="_blank"), align = "center")
@@ -75,7 +79,7 @@ tabPanel("Documentation",
            fluidRow(
              column(width=6,
                     
-                    p(strong("Formulas for values calculated on App page:")),
+                    p(strong("Formulas:")),
                     hr(),
                     p("Overall Accuracy = (TP + TN)/(TP + FP + FN + TN)"),  
                     p("Sensitivity = TP/(TP + FN)"), 
@@ -106,7 +110,7 @@ tabPanel("Documentation",
                     br(),
                     h2(a("LinkedIn: AJThurston", href="https://www.linkedin.com/in/ajthurston/", target="_blank")),
                     br(),
-                    h2(a("Medium:  @AJThurston", href="https://medium.com/@AJThurston", target="_blank"))
+                    h2(a("Substack:  @AJThurston", href="https://substack.com/@AJThurston", target="_blank"))
              )
            )
          )
@@ -117,23 +121,33 @@ tabPanel("Documentation",
 server <- shinyServer(function(input, output) {
   output$plot = renderPlot({
 
-
-
   #Simulated Data and Classification
+
+    if(input$setseed == TRUE)
+    {
+      set.seed(input$seed);
+    }
+    
+   
   x1 = rnorm(n=input$n, mean=input$predmean, sd=input$predSD) 
   y0 = rnorm(n=input$n, mean=input$actumean, sd=input$actuSD)
   y1 = x1*input$r+y0*(1-input$r^2)^0.5
-  Predicted = as.integer(x1>input$pcut)
-  Actual = as.integer(y1>input$acut)
-  data = data.frame(x1,y1,Predicted,Actual)
+  y2 = as.numeric(cut(y1, breaks = c(-3,input$thresh,3)))-1
+  type = case_when(x1>input$thresh & y2 == 1 ~ 'tp',
+                   x1<input$thresh & y2 == 1 ~ 'fn',
+                   x1<input$thresh & y2 == 0 ~ 'tn',
+                   .default = 'fp')
+  Predicted = as.factor(x1>input$thresh)
+  Actual = as.factor(y1>input$thresh)
+  data = data.frame(x1,y1,y2,type,Predicted,Actual)
   
   #Confusion Matrix
-  TP = sum(x1>input$pcut & y1>input$acut) #A
-  FN = sum(x1<input$pcut & y1>input$acut) #C
-  TN = sum(x1<input$pcut & y1<input$acut) #D
-  FP = sum(x1>input$pcut & y1<input$acut) #B
+  TP = sum(type == 'tp') #A
+  FN = sum(type == 'fn') #C
+  TN = sum(type == 'tn') #D
+  FP = sum(type == 'fp') #B
   
-  cm = confusionMatrix(data$Predicted,data$Actual,positive = "1")
+  cm = confusionMatrix(data$Predicted,data$Actual)
   
   Accuracy      = percent(cm$overall[1],digits = 2)
   Kappa         =   round(cm$overall[2],digits = 2)
@@ -184,15 +198,16 @@ server <- shinyServer(function(input, output) {
   output$text_F1              <- renderText({paste0("F1: ", F1)})
   
 # Plot --------------------------------------------------------------------
-    ggplot(data, aes(x=x1, y=y1)) +
-    scale_y_continuous(name="Actual Outcome", limits = c(-3,3), breaks = seq(-3,3,1), expand = c(0,0)) + 
+    ggplot(data, aes(x=x1, y=y2, color = type)) +
     scale_x_continuous(name="Predicted Outcome", limits = c(-3,3), breaks = seq(-3,3,1), expand = c(0,0)) +
-    geom_point(color="#006747", alpha=.7, size=3) +
+    scale_y_continuous(name="Actual Outcome", limits = c(-.5,1.5), breaks = seq(0,1), expand = c(0,0)) +
+    geom_jitter(alpha=.7, size=3) +
     
-    annotate("rect", xmin = input$pcut, xmax = 3, ymin = input$acut, ymax = 3, fill="darkgreen",alpha = input$trans/100, color="darkgreen") +
-    annotate("rect", xmin = -3, xmax = input$pcut, ymin = input$acut, ymax = 3, fill="red",alpha = input$trans/100, color="red") +
-    annotate("rect", xmin = -3, xmax = input$pcut, ymin = -3, ymax = input$acut, fill="darkgreen",alpha = input$trans/100, color="darkgreen") +
-    annotate("rect", xmin = input$pcut, xmax = 3, ymin = -3, ymax = input$acut, fill="red",alpha = input$trans/100, color="red") +
+    # annotate("rect", xmin = input$thresh, xmax = 1.5, ymin = input$acut, ymax = 3, fill="darkgreen",alpha = input$trans/100, color="darkgreen") +
+    # annotate("rect", xmin = -.5, xmax = input$thresh, ymin = input$acut, ymax = 3, fill="red",alpha = input$trans/100, color="red") +
+    # annotate("rect", xmin = -.5, xmax = input$thresh, ymin = -3, ymax = input$acut, fill="darkgreen",alpha = input$trans/100, color="darkgreen") +
+    # annotate("rect", xmin = input$thresh, xmax = 1.5, ymin = -3, ymax = input$acut, fill="red",alpha = input$trans/100, color="red") +
+    geom_vline(xintercept = input$thresh) +
     annotate("text", x =  2.5, y =  2.5, label = "TP", color="white", size=20, fontface=2) +
     annotate("text", x = -2.5, y =  2.5, label = "FN", color="white", size=20, fontface=2) +
     annotate("text", x = -2.5, y = -2.5, label = "TN", color="white", size=20, fontface=2) +
@@ -204,11 +219,10 @@ server <- shinyServer(function(input, output) {
           axis.text.x = element_text(color = 'black'),
           panel.grid.major.y = element_blank(), 
           panel.grid.major.x = element_blank(),
-          legend.key = element_rect(fill = NA)
-          
-        #Remember cowplot and plotROC for library for atttempt#2
+          legend.key = element_rect(fill = NA),
+          legend.position = 'none'
     )
-      }, height = 800, width = 600) #Close Render Plot
+      }, height = 200, width = 600) #Close Render Plot
 })#Close server
 
 shinyApp(ui = ui, server = server)
